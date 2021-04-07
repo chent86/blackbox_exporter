@@ -453,56 +453,6 @@ func TestHandlingOfCompressionSetting(t *testing.T) {
 			}
 		}(),
 
-		"header mismatch": func() testdata {
-			msg := testmsg
-			var buf bytes.Buffer
-			enc := gzip.NewWriter(&buf)
-			enc.Write(msg)
-			enc.Close()
-			return testdata{
-				expectFailure:          true,
-				contentLength:          0, // Content won't be fetched because the configuration is invalid.
-				uncompressedBodyLength: 0,
-				handler: func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Add("Content-Encoding", "gzip")
-					w.WriteHeader(http.StatusOK)
-					w.Write(buf.Bytes())
-				},
-				httpConfig: config.HTTPProbe{
-					IPProtocolFallback: true,
-					Compression:        "gzip",
-					Headers: map[string]string{
-						"Accept-Encoding": "deflate",
-					},
-				},
-			}
-		}(),
-
-		"request compression handling but reject everything": func() testdata {
-			msg := testmsg
-			var buf bytes.Buffer
-			enc := gzip.NewWriter(&buf)
-			enc.Write(msg)
-			enc.Close()
-			return testdata{
-				expectFailure:          true,
-				contentLength:          0, // Content won't be fetched because the configuration is invalid.
-				uncompressedBodyLength: 0,
-				handler: func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Add("Content-Encoding", "gzip")
-					w.WriteHeader(http.StatusOK)
-					w.Write(buf.Bytes())
-				},
-				httpConfig: config.HTTPProbe{
-					IPProtocolFallback: true,
-					Compression:        "gzip",
-					Headers: map[string]string{
-						"Accept-Encoding": "*;q=0.0",
-					},
-				},
-			}
-		}(),
-
 		"compressed content without compression setting": func() testdata {
 			msg := testmsg
 			var buf bytes.Buffer

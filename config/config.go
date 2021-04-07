@@ -16,9 +16,13 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"runtime"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -272,6 +276,16 @@ func (s *HTTPProbe) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	if err := s.HTTPClientConfig.Validate(); err != nil {
 		return err
 	}
+
+	for key, value := range s.Headers {
+		switch strings.Title(key) {
+		case "Accept-Encoding":
+			if !isCompressionAcceptEncodingValid(s.Compression, value) {
+				return fmt.Errorf(`invalid configuration "%s: %s", "compression: %s"`, key, value, s.Compression)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -358,4 +372,71 @@ func (s *HeaderMatch) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 
 	return nil
+}
+
+// isCompressionAcceptEncodingValid validates the compression +
+// Accept-Encoding combination.
+//
+// If there's a compression setting, and there's also an accept-encoding
+// header, they MUST match, otherwise we end up requesting something
+// that doesn't include the specified compression, and that's likely to
+// fail, depending on how the server is configured. Testing that the
+// server _ignores_ Accept-Encoding, e.g. by not including a particular
+// compression in the header but expecting it in the response falls out
+// of the scope of the tests we perform.
+//
+// With that logic, this function validates that if a compression
+// algorithm is specified, it's covered by the specified accept encoding
+// header. It doesn't need to be the most prefered encoding, but it MUST
+// be included in the prefered encodings.
+func isCompressionAcceptEncodingValid(encoding, acceptEncoding string) bool {
+	// unspecified compression + any encoding value is valid
+	// any compression + no accept encoding is valid
+	if encoding == "" || acceptEncoding == "" {
+		return true
+	}
+
+	type encodingQuality struct {
+		encoding string
+		quality  float32
+	}
+
+	var encodings []encodingQuality
+
+	for _, parts := range strings.Split(acceptEncoding, ",") {
+		var e encodingQuality
+
+		if idx := strings.LastIndexByte(parts, ';'); idx == -1 {
+			e.encoding = strings.TrimSpace(parts)
+			e.quality = 1.0
+		} else {
+			parseQuality := func(str string) float32 {
+				q, err := strconv.ParseFloat(str, 32)
+				if err != nil {
+					return 0
+				}
+				return float32(math.Round(q*1000) / 1000)
+			}
+
+			e.encoding = strings.TrimSpace(parts[:idx])
+
+			q := strings.TrimSpace(parts[idx+1:])
+			q = strings.TrimPrefix(q, "q=")
+			e.quality = parseQuality(q)
+		}
+
+		encodings = append(encodings, e)
+	}
+
+	sort.SliceStable(encodings, func(i, j int) bool {
+		return encodings[j].quality < encodings[i].quality
+	})
+
+	for _, e := range encodings {
+		if encoding == e.encoding || e.encoding == "*" {
+			return e.quality > 0
+		}
+	}
+
+	return false
 }
